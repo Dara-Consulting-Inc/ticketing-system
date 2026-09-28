@@ -2,7 +2,7 @@
 # Caddy can route to it. Not exposed to the host directly.
 services:
   opfbex:
-    image: ghcr.io/vjloable/ticketing-system:${IMAGE_TAG:-latest}
+    image: ghcr.io/dara-consulting-inc/ticketing-system:${IMAGE_TAG:-latest}
     container_name: opfbex-ticketing
     restart: unless-stopped
     expose:
