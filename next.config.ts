@@ -22,6 +22,38 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_APP_VERSION: resolveAppVersion(),
   },
+  async headers() {
+    return [
+      {
+        // Apply strict noindex on private paths
+        source: "/(admin|passes|feedback|auth)/:path*",
+        headers: [
+          {
+            key: "X-Robots-Tag",
+            value: "noindex, nofollow, noarchive"
+          }
+        ]
+      },
+      {
+        // Global security headers for all routes
+        source: "/:path*",
+        headers: [
+          {
+            key: "X-Frame-Options",
+            value: "SAMEORIGIN"
+          },
+          {
+            key: "X-Content-Type-Options",
+            value: "nosniff"
+          },
+          {
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin"
+          }
+        ]
+      }
+    ]
+  },
   images: {
     remotePatterns: [
       {

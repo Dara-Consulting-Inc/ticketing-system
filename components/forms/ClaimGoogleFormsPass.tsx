@@ -82,11 +82,9 @@ export function ClaimGoogleFormsPass({ onBack }: ClaimGoogleFormsPassProps) {
 
     const timer = setTimeout(async () => {
       setIsSearching(true)
-      const { data } = await supabase
-        .from("google_forms_registrants")
-        .select("id, full_name, email, organization, pass_id, days_attending")
-        .or(`full_name.ilike.%${query}%,email.ilike.%${query}%`)
-        .limit(6)
+      const { data } = await supabase.rpc("search_google_forms_registrants", {
+        p_query: query
+      })
 
       setSearchResults(data || [])
       setIsSearching(false)

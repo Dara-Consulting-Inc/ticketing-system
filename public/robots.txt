@@ -1,0 +1,14 @@
+# Block search enginer crawlers from indexing attendee tickets, admin portals, and feedback
+User-agent: *
+Disallow: /admin
+Disallow: /admin/*
+Disallow: /passes
+Disallow: /passes/*
+Disallow: /feedback
+Disallow: /auth/*
+
+# Allow crawlers to index only public marketing content
+Allow: /
+Allow: /register-visitor
+Allow: /register-exhibitor
+Allow: /register-sponsor

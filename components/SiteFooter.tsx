@@ -32,6 +32,7 @@ export function SiteFooter() {
             ["Schedule", "/#schedule"],
             ["Venue", "/#venue"],
             ["Feedback & Suggestions", "/feedback"],
+            ["Privacy Policy", "/privacy"]
           ]}
         />
 
