@@ -429,7 +429,7 @@ export function VisitorForm({
             remain confidential, secure, and will not be shared with unauthorized third parties
             without your prior permission. If you wish to update or remove your details from our
             system, you may contact us at{" "}
-            <span className="text-basil">opfbexofficial@gmail.com</span>.
+            <span className="text-basil">opfbex2026.tickets@gmail.com</span>.
           </p>
         </div>
 
