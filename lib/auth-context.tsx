@@ -44,10 +44,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (profileError) console.error("[Auth] Error fetching user profile:", profileError)
 
-      // 2. Fetch Passes (by user_id OR by matching email in form_data)
+      // 2. Fetch Passes (clean columns only)
       const { data: passesData } = await supabase
         .from("passes")
-        .select("id, event_id, pass_type, ticket_code, status, form_data, created_at, checked_in_at, checked_in_day1_at, checked_in_day2_at")
+        .select("id, event_id, pass_type, ticket_code, status, form_data, created_at")
         .or(`user_id.eq.${userId},form_data->>email.eq.${email.trim().toLowerCase()}`)
         .order("created_at", { ascending: false })
 
@@ -59,9 +59,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         status: p.status as PassStatus,
         formData: p.form_data,
         claimedAt: p.created_at,
-        checkedInAt: p.checked_in_at,
-        checkedInDay1At: p.checked_in_day1_at,
-        checkedInDay2At: p.checked_in_day2_at,
       }))
 
       const account: UserAccount = {

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
+import { EVENT_CONFIG } from "@/lib/event-config"
 import { createClient } from "@/lib/supabase/client"
 import { useAuth } from "@/lib/auth-context"
 import { AdminPassRecord, PassStatus, PassType } from "@/lib/pass-types"
@@ -88,15 +89,25 @@ export default function AdminDashboardPage() {
   const sortIndicator = (field: SortField) =>
     sortField === field ? (sortDirection === "asc" ? " ↑" : " ↓") : ""
 
-  // Fetch all visitor passes using batching to bypass the 1,000 PostgREST limit
+  // Fetch passes and scans
   const fetchPasses = useCallback(async () => {
     try {
+      // 0. Resolve OPFBEX event ID
+      const { data: eventData } = await supabase
+        .from("events")
+        .select("id")
+        .eq("slug", EVENT_CONFIG.slug || "opfbex-2026")
+        .single()
+
+      const eventId = eventData?.id
+
+      // 1. Fetch OPFBEX passes (clean columns only)
       let allRows: any[] = []
       let from = 0
       const batchSize = 1000
 
       while (true) {
-        const { data, error } = await supabase
+        let passQuery = supabase
           .from("passes")
           .select(`
             id,
@@ -107,12 +118,6 @@ export default function AdminDashboardPage() {
             status,
             form_data,
             created_at,
-            checked_in_at,
-            checked_in_day1_at,
-            checked_in_day2_at,
-            checked_in_by,
-            checked_in_day1_by,
-            checked_in_day2_by,
             profiles:user_id (
               id,
               full_name,
@@ -122,6 +127,12 @@ export default function AdminDashboardPage() {
           .eq("pass_type", "visitor")
           .order("created_at", { ascending: false })
           .range(from, from + batchSize - 1)
+
+        if (eventId) {
+          passQuery = passQuery.eq("event_id", eventId)
+        }
+
+        const { data, error } = await passQuery
 
         if (error) {
           console.error("Failed to load passes: ", error)
@@ -135,29 +146,62 @@ export default function AdminDashboardPage() {
         from += batchSize
       }
 
-      const formatted: AdminPassRecord[] = allRows.map((row: any) => ({
-        id: row.id,
-        eventId: row.event_id,
-        userId: row.user_id,
-        passType: row.pass_type as PassType,
-        ticketCode: row.ticket_code,
-        status: row.status as PassStatus,
-        formData: row.form_data || {},
-        claimedAt: row.created_at,
-        checkedInAt: row.checked_in_at,
-        checkedInDay1At: row.checked_in_day1_at,
-        checkedInDay2At: row.checked_in_day2_at,
-        checkedInBy: row.checked_in_by,
-        checkedInDay1By: row.checked_in_day1_by,
-        checkedInDay2By: row.checked_in_day2_by,
-        userProfile: row.profiles
-          ? {
-              id: row.profiles.id,
-              fullName: row.profiles.full_name,
-              email: row.profiles.email,
-            }
-          : undefined,
-      }))
+      // 2. Fetch scans from ticket_scans ledger
+      let allScans: any[] = []
+      let scanFrom = 0
+      const scanBatchSize = 1000
+
+      while (true) {
+        let scansQuery = supabase
+          .from("ticket_scans")
+          .select("pass_id, event_day, scanned_at")
+          .range(scanFrom, scanFrom + scanBatchSize - 1)
+
+        if (eventId) {
+          scansQuery = scansQuery.eq("event_id", eventId)
+        }
+
+        const { data: scansData, error: scanErr } = await scansQuery
+
+        if (scanErr || !scansData || scansData.length === 0) break
+        allScans.push(...scansData)
+        if (scansData.length < scanBatchSize) break
+        scanFrom += scanBatchSize
+      }
+
+      const scansMap = new Map<string, { day1?: string; day2?: string; latest?: string }>()
+      for (const s of allScans) {
+        const existing = scansMap.get(s.pass_id) || {}
+        if (s.event_day === 1) existing.day1 = s.scanned_at
+        if (s.event_day === 2) existing.day2 = s.scanned_at
+        existing.latest = s.scanned_at
+        scansMap.set(s.pass_id, existing)
+      }
+
+      // 3. Map into AdminPassRecord
+      const formatted: AdminPassRecord[] = allRows.map((row: any) => {
+        const passScans = scansMap.get(row.id)
+        return {
+          id: row.id,
+          eventId: row.event_id,
+          userId: row.user_id,
+          passType: row.pass_type as PassType,
+          ticketCode: row.ticket_code,
+          status: row.status as PassStatus,
+          formData: row.form_data || {},
+          claimedAt: row.created_at,
+          checkedInDay1At: passScans?.day1,
+          checkedInDay2At: passScans?.day2,
+          checkedInAt: passScans?.latest || (row.status === "checked_in" ? row.created_at : undefined),
+          userProfile: row.profiles
+            ? {
+                id: row.profiles.id,
+                fullName: row.profiles.full_name,
+                email: row.profiles.email,
+              }
+            : undefined,
+        }
+      })
 
       setPasses(formatted)
     } catch (err) {
@@ -166,7 +210,6 @@ export default function AdminDashboardPage() {
       setIsLoading(false)
     }
   }, [supabase])
-
 
   // Realtime Postgres Changes Subscription
   useEffect(() => {

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
+import { EVENT_CONFIG } from "@/lib/event-config"
 import { usePathname } from "next/navigation"
 import { Logo } from "@/components/Logo"
 import { useAuth } from "@/lib/auth-context"
@@ -15,26 +16,59 @@ export function AdminNav() {
   // Fetch pending approval count + subscribe to realtime updates
   useEffect(() => {
     const supabase = createClient()
+    let channel: any
 
-    const fetchPending = async () => {
-      const { count } = await supabase
-        .from("passes")
-        .select("*", { count: "exact", head: true })
-        .eq("status", "pending_verification")
-      setPendingCount(count || 0)
+    const initPending = async () => {
+      // 1. Resolve event_id for OPFBEX
+      const { data: eventData } = await supabase
+        .from("events")
+        .select("id")
+        .eq("slug", EVENT_CONFIG.slug || "opfbex-2026")
+        .single()
+
+      const eventId = eventData?.id
+
+      const fetchPending = async () => {
+        let q = supabase
+          .from("passes")
+          .select("*", { count: "exact", head: true })
+          .eq("status", "pending_verification")
+
+        if (eventId) {
+          q = q.eq("event_id", eventId)
+        }
+
+        const { count } = await q
+        setPendingCount(count || 0)
+      }
+
+      await fetchPending()
+
+      // Unique channel name avoids duplicate subscription collisions in React 19 / Turbopack
+      const channelId = `admin-nav-pending-${Math.random().toString(36).slice(2, 7)}`
+      channel = supabase
+        .channel(channelId)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "passes",
+            filter: eventId ? `event_id=eq.${eventId}` : undefined,
+          },
+          () => {
+            fetchPending()
+          }
+        )
+        .subscribe()
     }
 
-    fetchPending()
-
-    const channel = supabase
-      .channel("admin-nav-pending")
-      .on("postgres_changes", { event: "*", schema: "public", table: "passes" }, () => {
-        fetchPending()
-      })
-      .subscribe()
+    initPending()
 
     return () => {
-      supabase.removeChannel(channel)
+      if (channel) {
+        supabase.removeChannel(channel)
+      }
     }
   }, [])
 
