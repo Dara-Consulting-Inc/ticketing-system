@@ -43,12 +43,6 @@ export default function AdminScanPage() {
           status,
           form_data,
           created_at,
-          checked_in_at,
-          checked_in_day1_at,
-          checked_in_day2_at,
-          checked_in_by,
-          checked_in_day1_by,
-          checked_in_day2_by,
           profiles:user_id (
             id,
             full_name,
@@ -69,6 +63,18 @@ export default function AdminScanPage() {
         return
       }
 
+      // Fetch scans for this pass from ticket_scans ledger
+      const { data: scans } = await supabase
+        .from("ticket_scans")
+        .select("event_day, scanned_at, scanned_by")
+        .eq("pass_id", passRow.id)
+
+      const day1Scan = scans?.find((s) => s.event_day === 1)
+      const day2Scan = scans?.find((s) => s.event_day === 2)
+      const latestScan = scans && scans.length > 0
+        ? [...scans].sort((a, b) => new Date(b.scanned_at).getTime() - new Date(a.scanned_at).getTime())[0]
+        : null
+
       const pass: AdminPassRecord = {
         id: passRow.id,
         eventId: passRow.event_id,
@@ -78,12 +84,12 @@ export default function AdminScanPage() {
         status: passRow.status,
         formData: passRow.form_data || {},
         claimedAt: passRow.created_at,
-        checkedInAt: passRow.checked_in_at,
-        checkedInDay1At: passRow.checked_in_day1_at,
-        checkedInDay2At: passRow.checked_in_day2_at,
-        checkedInBy: passRow.checked_in_by,
-        checkedInDay1By: passRow.checked_in_day1_by,
-        checkedInDay2By: passRow.checked_in_day2_by,
+        checkedInAt: latestScan?.scanned_at,
+        checkedInDay1At: day1Scan?.scanned_at,
+        checkedInDay2At: day2Scan?.scanned_at,
+        checkedInBy: latestScan?.scanned_by,
+        checkedInDay1By: day1Scan?.scanned_by,
+        checkedInDay2By: day2Scan?.scanned_by,
         userProfile: passRow.profiles
           ? {
               id: rowProfile(passRow.profiles).id,
@@ -207,24 +213,37 @@ export default function AdminScanPage() {
 
       // 7. RECORD CHECK-IN FOR ACTIVE DAY (Only when event was live)
       const checkInTime = new Date().toISOString()
-      const updatePayload: Record<string, any> = {
-        status: "checked_in",
-        checked_in_at: checkInTime,
-        checked_in_by: user?.id || null,
-        updated_at: checkInTime,
+
+      // Insert record into ticket_scans ledger
+      const { error: scanInsertErr } = await supabase
+        .from("ticket_scans")
+        .insert({
+          event_id: pass.eventId,
+          pass_id: pass.id,
+          event_day: activeDay,
+          gate_name: "Main Entrance",
+          scanned_by: user?.id || null,
+          scanned_at: checkInTime,
+          scan_type: "camera",
+        })
+
+      if (scanInsertErr) {
+        if (soundEnabled) audioFeedback.playError()
+        setScanResult({
+          status: "not_found",
+          message: `Failed to record scan: ${scanInsertErr.message}`,
+        })
+        setIsProcessing(false)
+        return
       }
 
-      if (activeDay === 1) {
-        updatePayload.checked_in_day1_at = checkInTime
-        updatePayload.checked_in_day1_by = user?.id || null
-      } else {
-        updatePayload.checked_in_day2_at = checkInTime
-        updatePayload.checked_in_day2_by = user?.id || null
-      }
-
+      // Update pass status to checked_in
       const { error: updateErr } = await supabase
         .from("passes")
-        .update(updatePayload)
+        .update({
+          status: "checked_in",
+          updated_at: checkInTime,
+        })
         .eq("id", pass.id)
 
       if (updateErr) {
@@ -293,41 +312,40 @@ export default function AdminScanPage() {
   const handleUndoCheckIn = async (passId: string) => {
     setIsProcessing(true)
     const pass = scanResult?.pass
-    const updatePayload: Record<string, any> = {
-      updated_at: new Date().toISOString(),
+
+    // 1. Delete scan record from ticket_scans for active day
+    const { error: scanDeleteErr } = await supabase
+      .from("ticket_scans")
+      .delete()
+      .eq("pass_id", passId)
+      .eq("event_day", activeDay)
+
+    if (scanDeleteErr) {
+      alert(`Failed to undo scan: ${scanDeleteErr.message}`)
+      setIsProcessing(false)
+      return
     }
 
-    if (activeDay === 1) {
-      updatePayload.checked_in_day1_at = null
-      updatePayload.checked_in_day1_by = null
-      if (!pass?.checkedInDay2At) {
-        updatePayload.status = "active"
-        updatePayload.checked_in_at = null
-      }
-    } else {
-      updatePayload.checked_in_day2_at = null
-      updatePayload.checked_in_day2_by = null
-      if (!pass?.checkedInDay1At) {
-        updatePayload.status = "active"
-        updatePayload.checked_in_at = null
-      } else {
-        // Fall back latest check-in to Day 1
-        updatePayload.checked_in_at = pass.checkedInDay1At
-      }
+    // 2. If the pass has no remaining scans on other days, revert status to active
+    const otherDay = activeDay === 1 ? 2 : 1
+    const hasOtherScan = otherDay === 1 ? !!pass?.checkedInDay1At : !!pass?.checkedInDay2At
+
+    if (!hasOtherScan) {
+      await supabase
+        .from("passes")
+        .update({ status: "active", updated_at: new Date().toISOString() })
+        .eq("id", passId)
     }
 
-    const { error } = await supabase
-      .from("passes")
-      .update(updatePayload)
-      .eq("id", passId)
-
+    setStats((prev) => ({
+      ...prev,
+      valid: Math.max(0, prev.valid - 1),
+    }))
+    addRecent(scanResult?.pass?.ticketCode || "", `Undo D${activeDay}`, "Staff Reversal")
+    if (scanResult?.pass) {
+      processTicketCode(scanResult.pass.ticketCode)
+    }
     setIsProcessing(false)
-
-    if (error) {
-      alert("Failed to undo check-in: " + error.message)
-    } else {
-      setScanResult(null)
-    }
   }
 
   return (
