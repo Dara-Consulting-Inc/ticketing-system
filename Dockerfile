@@ -2,7 +2,7 @@
 
 # Debian "bookworm" slim, pinned for reproducible builds. glibc-based, so
 # broad native-dep compatibility. Apply the latest security patches on top.
-FROM node:22.20-bookworm-slim AS base
+FROM node:22.23.4-bookworm-slim AS base
 RUN apt-get update \
   && apt-get upgrade -y \
   && rm -rf /var/lib/apt/lists/*
